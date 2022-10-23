@@ -31,6 +31,8 @@ export type SignalCreds = {
 export type AccountSettings = {
     /** unarchive chats when a new message is received */
     unarchiveChats: boolean
+    /** the default mode to start new conversations with */
+    defaultDisappearingMode?: Pick<proto.IConversation, 'ephemeralExpiration' | 'ephemeralSettingTimestamp'>
 }
 
 export type AuthenticationCreds = SignalCreds & {
@@ -48,6 +50,8 @@ export type AuthenticationCreds = SignalCreds & {
     platform?: string
 
     processedHistoryMessages: MinimalMessage[]
+    /** number of times history & app state has been synced */
+    accountSyncCounter: number
     accountSettings: AccountSettings
 }
 
@@ -56,7 +60,7 @@ export type SignalDataTypeMap = {
     'session': any
     'sender-key': any
     'sender-key-memory': { [jid: string]: boolean }
-    'app-state-sync-key': proto.IAppStateSyncKeyData
+    'app-state-sync-key': proto.Message.IAppStateSyncKeyData
     'app-state-sync-version': LTHashState
 }
 
@@ -67,12 +71,13 @@ type Awaitable<T> = T | Promise<T>
 export type SignalKeyStore = {
     get<T extends keyof SignalDataTypeMap>(type: T, ids: string[]): Awaitable<{ [id: string]: SignalDataTypeMap[T] }>
     set(data: SignalDataSet): Awaitable<void>
+    /** clear all the data in the store */
+    clear?(): Awaitable<void>
 }
 
 export type SignalKeyStoreWithTransaction = SignalKeyStore & {
     isInTransaction: () => boolean
     transaction(exec: () => Promise<void>): Promise<void>
-    prefetch<T extends keyof SignalDataTypeMap>(type: T, ids: string[]): Promise<void>
 }
 
 export type TransactionCapabilityOptions = {

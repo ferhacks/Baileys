@@ -8,9 +8,9 @@ import { Curve, hmacSign } from './crypto'
 import { encodeBigEndian } from './generics'
 import { createSignalIdentity } from './signal'
 
-type ClientPayloadConfig = Pick<SocketConfig, 'version' | 'browser'>
+type ClientPayloadConfig = Pick<SocketConfig, 'version' | 'browser' | 'syncFullHistory'>
 
-const getUserAgent = ({ version }: ClientPayloadConfig): proto.IUserAgent => {
+const getUserAgent = ({ version }: ClientPayloadConfig): proto.ClientPayload.IUserAgent => {
 	const osVersion = '0.1'
 	return {
 		appVersion: {
@@ -18,8 +18,8 @@ const getUserAgent = ({ version }: ClientPayloadConfig): proto.IUserAgent => {
 			secondary: version[1],
 			tertiary: version[2],
 		},
-		platform: proto.UserAgent.UserAgentPlatform.WEB,
-		releaseChannel: proto.UserAgent.UserAgentReleaseChannel.RELEASE,
+		platform: proto.ClientPayload.UserAgent.Platform.WEB,
+		releaseChannel: proto.ClientPayload.UserAgent.ReleaseChannel.RELEASE,
 		mcc: '000',
 		mnc: '000',
 		osVersion: osVersion,
@@ -31,21 +31,31 @@ const getUserAgent = ({ version }: ClientPayloadConfig): proto.IUserAgent => {
 	}
 }
 
-const getWebInfo = (): proto.IWebInfo => ({
-	webSubPlatform: proto.WebInfo.WebInfoWebSubPlatform.WEB_BROWSER
-})
+const PLATFORM_MAP = {
+	'Mac OS': proto.ClientPayload.WebInfo.WebSubPlatform.DARWIN,
+	'Windows': proto.ClientPayload.WebInfo.WebSubPlatform.WIN32
+}
+
+const getWebInfo = (config: ClientPayloadConfig): proto.ClientPayload.IWebInfo => {
+	let webSubPlatform = proto.ClientPayload.WebInfo.WebSubPlatform.WEB_BROWSER
+	if(config.syncFullHistory && PLATFORM_MAP[config.browser[0]]) {
+		webSubPlatform = PLATFORM_MAP[config.browser[0]]
+	}
+
+	return { webSubPlatform }
+}
 
 const getClientPayload = (config: ClientPayloadConfig): proto.IClientPayload => {
 	return {
-		connectType: proto.ClientPayload.ClientPayloadConnectType.WIFI_UNKNOWN,
-		connectReason: proto.ClientPayload.ClientPayloadConnectReason.USER_ACTIVATED,
+		connectType: proto.ClientPayload.ConnectType.WIFI_UNKNOWN,
+		connectReason: proto.ClientPayload.ConnectReason.USER_ACTIVATED,
 		userAgent: getUserAgent(config),
-		webInfo: getWebInfo(),
+		webInfo: getWebInfo(config),
 	}
 }
 
 export const generateLoginNode = (userJid: string, config: ClientPayloadConfig): proto.IClientPayload => {
-	const { user, device } = jidDecode(userJid)
+	const { user, device } = jidDecode(userJid)!
 	const payload: proto.IClientPayload = {
 		...getClientPayload(config),
 		passive: true,
@@ -73,9 +83,9 @@ export const generateRegistrationNode = (
 			secondary: +(browserVersion[1] || 1),
 			tertiary: +(browserVersion[2] || 0),
 		},
-		platformType: proto.DeviceProps.DevicePropsPlatformType[config.browser[1].toUpperCase()]
-			|| proto.DeviceProps.DevicePropsPlatformType.UNKNOWN,
-		requireFullSync: false,
+		platformType: proto.DeviceProps.PlatformType[config.browser[1].toUpperCase()]
+			|| proto.DeviceProps.PlatformType.UNKNOWN,
+		requireFullSync: config.syncFullHistory,
 	}
 
 	const companionProto = proto.DeviceProps.encode(companion).finish()
@@ -136,11 +146,9 @@ export const configureSuccessfulPairing = (
 	// sign the details with our identity key
 	const deviceMsg = Buffer.concat([ Buffer.from([6, 1]), deviceDetails, signedIdentityKey.public, accountSignatureKey ])
 	account.deviceSignature = Curve.sign(signedIdentityKey.private, deviceMsg)
-	// do not provide the "accountSignatureKey" back
-	account.accountSignatureKey = null
 
 	const identity = createSignalIdentity(jid, accountSignatureKey)
-	const accountEnc = proto.ADVSignedDeviceIdentity.encode(account).finish()
+	const accountEnc = encodeSignedDeviceIdentity(account, false)
 
 	const deviceIdentity = proto.ADVDeviceIdentity.decode(account.details)
 
@@ -180,4 +188,21 @@ export const configureSuccessfulPairing = (
 		creds: authUpdate,
 		reply
 	}
+}
+
+export const encodeSignedDeviceIdentity = (
+	account: proto.IADVSignedDeviceIdentity,
+	includeSignatureKey: boolean
+) => {
+	account = { ...account }
+	// set to null if we are not to include the signature key
+	// or if we are including the signature key but it is empty
+	if(!includeSignatureKey || !account.accountSignatureKey?.length) {
+		account.accountSignatureKey = null
+	}
+
+	const accountEnc = proto.ADVSignedDeviceIdentity
+		.encode(account)
+		.finish()
+	return accountEnc
 }

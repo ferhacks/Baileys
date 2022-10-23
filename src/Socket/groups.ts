@@ -1,7 +1,7 @@
 import { proto } from '../../WAProto'
 import { GroupMetadata, ParticipantAction, SocketConfig, WAMessageKey, WAMessageStubType } from '../Types'
 import { generateMessageID, unixTimestampSeconds } from '../Utils'
-import { BinaryNode, getBinaryNodeChild, getBinaryNodeChildren, jidEncode, jidNormalizedUser } from '../WABinary'
+import { BinaryNode, getBinaryNodeChild, getBinaryNodeChildren, getBinaryNodeChildString, jidEncode, jidNormalizedUser } from '../WABinary'
 import { makeChatsSocket } from './chats'
 
 export const makeGroupsSocket = (config: SocketConfig) => {
@@ -120,7 +120,9 @@ export const makeGroupsSocket = (config: SocketConfig) => {
 							...(description ? { id: generateMessageID() } : { delete: 'true' }),
 							...(prev ? { prev } : {})
 						},
-						content: description ? [{ tag: 'body', attrs: {}, content: Buffer.from(description, 'utf-8') }] : null
+						content: description ? [
+							{ tag: 'body', attrs: {}, content: Buffer.from(description, 'utf-8') }
+						] : undefined
 					}
 				]
 			)
@@ -128,40 +130,39 @@ export const makeGroupsSocket = (config: SocketConfig) => {
 		groupInviteCode: async(jid: string) => {
 			const result = await groupQuery(jid, 'get', [{ tag: 'invite', attrs: {} }])
 			const inviteNode = getBinaryNodeChild(result, 'invite')
-			return inviteNode.attrs.code
+			return inviteNode?.attrs.code
 		},
 		groupRevokeInvite: async(jid: string) => {
 			const result = await groupQuery(jid, 'set', [{ tag: 'invite', attrs: {} }])
 			const inviteNode = getBinaryNodeChild(result, 'invite')
-			return inviteNode.attrs.code
+			return inviteNode?.attrs.code
 		},
 		groupAcceptInvite: async(code: string) => {
 			const results = await groupQuery('@g.us', 'set', [{ tag: 'invite', attrs: { code } }])
 			const result = getBinaryNodeChild(results, 'group')
-			return result.attrs.jid
+			return result?.attrs.jid
 		},
 		/**
 		 * accept a GroupInviteMessage
 		 * @param key the key of the invite message, or optionally only provide the jid of the person who sent the invite
 		 * @param inviteMessage the message to accept
 		 */
-		groupAcceptInviteV4: async(key: string | WAMessageKey, inviteMessage: proto.IGroupInviteMessage) => {
+		groupAcceptInviteV4: ev.createBufferedFunction(async(key: string | WAMessageKey, inviteMessage: proto.Message.IGroupInviteMessage) => {
 			key = typeof key === 'string' ? { remoteJid: key } : key
-			const results = await groupQuery(inviteMessage.groupJid, 'set', [{
+			const results = await groupQuery(inviteMessage.groupJid!, 'set', [{
 				tag: 'accept',
 				attrs: {
-					code: inviteMessage.inviteCode,
-					expiration: inviteMessage.inviteExpiration.toString(),
+					code: inviteMessage.inviteCode!,
+					expiration: inviteMessage.inviteExpiration!.toString(),
 					admin: key.remoteJid!
 				}
 			}])
 
-			const started = ev.buffer()
 			// if we have the full message key
 			// update the invite message to be expired
 			if(key.id) {
 				// create new invite message that is expired
-				inviteMessage = proto.GroupInviteMessage.fromObject(inviteMessage)
+				inviteMessage = proto.Message.GroupInviteMessage.fromObject(inviteMessage)
 				inviteMessage.inviteExpiration = 0
 				inviteMessage.inviteCode = ''
 				ev.emit('messages.update', [
@@ -195,12 +196,8 @@ export const makeGroupsSocket = (config: SocketConfig) => {
 				'notify'
 			)
 
-			if(started) {
-				await ev.flush()
-			}
-
 			return results.attrs.from
-		},
+		}),
 		groupGetInviteInfo: async(code: string) => {
 			const results = await groupQuery('@g.us', 'get', [{ tag: 'invite', attrs: { code } }])
 			return extractGroupMetadata(results)
@@ -254,12 +251,12 @@ export const makeGroupsSocket = (config: SocketConfig) => {
 
 
 export const extractGroupMetadata = (result: BinaryNode) => {
-	const group = getBinaryNodeChild(result, 'group')
+	const group = getBinaryNodeChild(result, 'group')!
 	const descChild = getBinaryNodeChild(group, 'description')
 	let desc: string | undefined
 	let descId: string | undefined
 	if(descChild) {
-		desc = getBinaryNodeChild(descChild, 'body')?.content as string
+		desc = getBinaryNodeChildString(descChild, 'body')
 		descId = descChild.attrs.id
 	}
 

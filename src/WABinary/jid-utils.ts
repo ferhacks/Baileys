@@ -11,18 +11,23 @@ export type JidWithDevice = {
     device?: number
 }
 
+export type FullJid = JidWithDevice & {
+	server: JidServer | string
+	agent?: number
+}
+
 export const jidEncode = (user: string | number | null, server: JidServer, device?: number, agent?: number) => {
 	return `${user || ''}${!!agent ? `_${agent}` : ''}${!!device ? `:${device}` : ''}@${server}`
 }
 
-export const jidDecode = (jid: string) => {
+export const jidDecode = (jid: string | undefined): FullJid | undefined => {
 	const sepIdx = typeof jid === 'string' ? jid.indexOf('@') : -1
 	if(sepIdx < 0) {
 		return undefined
 	}
 
-	const server = jid.slice(sepIdx + 1)
-	const userCombined = jid.slice(0, sepIdx)
+	const server = jid!.slice(sepIdx + 1)
+	const userCombined = jid!.slice(0, sepIdx)
 
 	const [userAgent, device] = userCombined.split(':')
 	const [user, agent] = userAgent.split('_')
@@ -36,19 +41,24 @@ export const jidDecode = (jid: string) => {
 }
 
 /** is the jid a user */
-export const areJidsSameUser = (jid1: string, jid2: string) => (
+export const areJidsSameUser = (jid1: string | undefined, jid2: string | undefined) => (
 	jidDecode(jid1)?.user === jidDecode(jid2)?.user
 )
 /** is the jid a user */
-export const isJidUser = (jid: string) => (jid?.endsWith('@s.whatsapp.net'))
+export const isJidUser = (jid: string | undefined) => (jid?.endsWith('@s.whatsapp.net'))
 /** is the jid a broadcast */
-export const isJidBroadcast = (jid: string) => (jid?.endsWith('@broadcast'))
+export const isJidBroadcast = (jid: string | undefined) => (jid?.endsWith('@broadcast'))
 /** is the jid a group */
-export const isJidGroup = (jid: string) => (jid?.endsWith('@g.us'))
+export const isJidGroup = (jid: string | undefined) => (jid?.endsWith('@g.us'))
 /** is the jid the status broadcast */
 export const isJidStatusBroadcast = (jid: string) => jid === 'status@broadcast'
 
-export const jidNormalizedUser = (jid: string) => {
-	const { user, server } = jidDecode(jid)
+export const jidNormalizedUser = (jid: string | undefined) => {
+	const result = jidDecode(jid)
+	if(!result) {
+		return ''
+	}
+
+	const { user, server } = result
 	return jidEncode(user, server === 'c.us' ? 's.whatsapp.net' : server as JidServer)
 }

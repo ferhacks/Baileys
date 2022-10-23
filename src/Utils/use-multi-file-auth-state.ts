@@ -15,12 +15,12 @@ import { BufferJSON } from './generics'
 export const useMultiFileAuthState = async(folder: string): Promise<{ state: AuthenticationState, saveCreds: () => Promise<void> }> => {
 
 	const writeData = (data: any, file: string) => {
-		return writeFile(join(folder, fixFileName(file)), JSON.stringify(data, BufferJSON.replacer))
+		return writeFile(join(folder, fixFileName(file)!), JSON.stringify(data, BufferJSON.replacer))
 	}
 
 	const readData = async(file: string) => {
 		try {
-			const data = await readFile(join(folder, fixFileName(file)), { encoding: 'utf-8' })
+			const data = await readFile(join(folder, fixFileName(file)!), { encoding: 'utf-8' })
 			return JSON.parse(data, BufferJSON.reviver)
 		} catch(error) {
 			return null
@@ -29,7 +29,7 @@ export const useMultiFileAuthState = async(folder: string): Promise<{ state: Aut
 
 	const removeData = async(file: string) => {
 		try {
-			await unlink(fixFileName(file))
+			await unlink(join(folder, fixFileName(file)!))
 		} catch{
 
 		}
@@ -59,7 +59,7 @@ export const useMultiFileAuthState = async(folder: string): Promise<{ state: Aut
 							async id => {
 								let value = await readData(`${type}-${id}.json`)
 								if(type === 'app-state-sync-key' && value) {
-									value = proto.AppStateSyncKeyData.fromObject(value)
+									value = proto.Message.AppStateSyncKeyData.fromObject(value)
 								}
 
 								data[id] = value

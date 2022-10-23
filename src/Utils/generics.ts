@@ -1,11 +1,11 @@
 import { Boom } from '@hapi/boom'
-import axios from 'axios'
+import axios, { AxiosRequestConfig } from 'axios'
 import { randomBytes } from 'crypto'
 import { platform, release } from 'os'
 import { Logger } from 'pino'
 import { proto } from '../../WAProto'
 import { version as baileysVersion } from '../Defaults/baileys-version.json'
-import { BaileysEventMap, CommonBaileysEventEmitter, DisconnectReason, WACallUpdateType, WAVersion } from '../Types'
+import { BaileysEventEmitter, BaileysEventMap, DisconnectReason, WACallUpdateType, WAVersion } from '../Types'
 import { BinaryNode, getAllBinaryNodeChildren } from '../WABinary'
 
 const PLATFORM_MAP = {
@@ -86,40 +86,21 @@ export const encodeBigEndian = (e: number, t = 4) => {
 	return a
 }
 
-export const toNumber = (t: Long | number): number => ((typeof t === 'object' && t) ? ('toNumber' in t ? t.toNumber() : (t as any).low) : t)
-
-export function shallowChanges <T>(old: T, current: T, { lookForDeletedKeys }: {lookForDeletedKeys: boolean}): Partial<T> {
-	const changes: Partial<T> = {}
-	for(const key in current) {
-		if(old[key] !== current[key]) {
-			changes[key] = current[key] || null
-		}
-	}
-
-	if(lookForDeletedKeys) {
-		for(const key in old) {
-			if(!changes[key] && old[key] !== current[key]) {
-				changes[key] = current[key] || null
-			}
-		}
-	}
-
-	return changes
-}
+export const toNumber = (t: Long | number | null | undefined): number => ((typeof t === 'object' && t) ? ('toNumber' in t ? t.toNumber() : (t as any).low) : t)
 
 /** unix timestamp of a date in seconds */
 export const unixTimestampSeconds = (date: Date = new Date()) => Math.floor(date.getTime() / 1000)
 
 export type DebouncedTimeout = ReturnType<typeof debouncedTimeout>
 
-export const debouncedTimeout = (intervalMs: number = 1000, task: () => void = undefined) => {
-	let timeout: NodeJS.Timeout
+export const debouncedTimeout = (intervalMs: number = 1000, task?: () => void) => {
+	let timeout: NodeJS.Timeout | undefined
 	return {
 		start: (newIntervalMs?: number, newTask?: () => void) => {
 			task = newTask || task
 			intervalMs = newIntervalMs || intervalMs
 			timeout && clearTimeout(timeout)
-			timeout = setTimeout(task, intervalMs)
+			timeout = setTimeout(() => task?.(), intervalMs)
 		},
 		cancel: () => {
 			timeout && clearTimeout(timeout)
@@ -155,7 +136,7 @@ export const delayCancellable = (ms: number) => {
 	return { delay, cancel }
 }
 
-export async function promiseTimeout<T>(ms: number, promise: (resolve: (v?: T)=>void, reject: (error) => void) => void) {
+export async function promiseTimeout<T>(ms: number | undefined, promise: (resolve: (v?: T)=>void, reject: (error) => void) => void) {
 	if(!ms) {
 		return new Promise (promise)
 	}
@@ -184,9 +165,9 @@ export async function promiseTimeout<T>(ms: number, promise: (resolve: (v?: T)=>
 // generate a random ID to attach to a message
 export const generateMessageID = () => 'BAE5' + randomBytes(6).toString('hex').toUpperCase()
 
-export function bindWaitForEvent<T extends keyof BaileysEventMap<any>>(ev: CommonBaileysEventEmitter<any>, event: T) {
-	return async(check: (u: BaileysEventMap<any>[T]) => boolean, timeoutMs?: number) => {
-		let listener: (item: BaileysEventMap<any>[T]) => void
+export function bindWaitForEvent<T extends keyof BaileysEventMap>(ev: BaileysEventEmitter, event: T) {
+	return async(check: (u: BaileysEventMap[T]) => boolean | undefined, timeoutMs?: number) => {
+		let listener: (item: BaileysEventMap[T]) => void
 		let closeListener: any
 		await (
 			promiseTimeout(
@@ -219,13 +200,13 @@ export function bindWaitForEvent<T extends keyof BaileysEventMap<any>>(ev: Commo
 	}
 }
 
-export const bindWaitForConnectionUpdate = (ev: CommonBaileysEventEmitter<any>) => bindWaitForEvent(ev, 'connection.update')
+export const bindWaitForConnectionUpdate = (ev: BaileysEventEmitter) => bindWaitForEvent(ev, 'connection.update')
 
-export const printQRIfNecessaryListener = (ev: CommonBaileysEventEmitter<any>, logger: Logger) => {
+export const printQRIfNecessaryListener = (ev: BaileysEventEmitter, logger: Logger) => {
 	ev.on('connection.update', async({ qr }) => {
 		if(qr) {
 			const QR = await import('qrcode-terminal')
-				.catch(err => {
+				.catch(() => {
 					logger.error('QR code terminal not added as dependency')
 				})
 			QR?.generate(qr, { small: true })
@@ -237,10 +218,16 @@ export const printQRIfNecessaryListener = (ev: CommonBaileysEventEmitter<any>, l
  * utility that fetches latest baileys version from the master branch.
  * Use to ensure your WA connection is always on the latest version
  */
-export const fetchLatestBaileysVersion = async() => {
+export const fetchLatestBaileysVersion = async(options: AxiosRequestConfig<any> = { }) => {
 	const URL = 'https://raw.githubusercontent.com/adiwajshing/Baileys/master/src/Defaults/baileys-version.json'
 	try {
-		const result = await axios.get<{ version: WAVersion }>(URL, { responseType: 'json' })
+		const result = await axios.get<{ version: WAVersion }>(
+			URL,
+			{
+				...options,
+				responseType: 'json'
+			}
+		)
 		return {
 			version: result.data.version,
 			isLatest: true
@@ -258,9 +245,15 @@ export const fetchLatestBaileysVersion = async() => {
  * A utility that fetches the latest web version of whatsapp.
  * Use to ensure your WA connection is always on the latest version
  */
-export const fetchLatestWaWebVersion = async() => {
+export const fetchLatestWaWebVersion = async(options: AxiosRequestConfig<any>) => {
 	try {
-		const result = await axios.get('https://web.whatsapp.com/check-update?version=1&platform=web', { responseType: 'json' })
+		const result = await axios.get(
+			'https://web.whatsapp.com/check-update?version=1&platform=web',
+			{
+				...options,
+				responseType: 'json'
+			}
+		)
 		const version = result.data.currentVersion.split('.')
 		return {
 			version: [+version[0], +version[1], +version[2]] as WAVersion,
@@ -281,19 +274,19 @@ export const generateMdTagPrefix = () => {
 	return `${bytes.readUInt16BE()}.${bytes.readUInt16BE(2)}-`
 }
 
-const STATUS_MAP: { [_: string]: proto.WebMessageInfo.WebMessageInfoStatus } = {
-	'played': proto.WebMessageInfo.WebMessageInfoStatus.PLAYED,
-	'read': proto.WebMessageInfo.WebMessageInfoStatus.READ,
-	'read-self': proto.WebMessageInfo.WebMessageInfoStatus.READ
+const STATUS_MAP: { [_: string]: proto.WebMessageInfo.Status } = {
+	'played': proto.WebMessageInfo.Status.PLAYED,
+	'read': proto.WebMessageInfo.Status.READ,
+	'read-self': proto.WebMessageInfo.Status.READ
 }
 /**
  * Given a type of receipt, returns what the new status of the message should be
  * @param type type from receipt
  */
 export const getStatusFromReceiptType = (type: string | undefined) => {
-	const status = STATUS_MAP[type]
+	const status = STATUS_MAP[type!]
 	if(typeof type === 'undefined') {
-		return proto.WebMessageInfo.WebMessageInfoStatus.DELIVERY_ACK
+		return proto.WebMessageInfo.Status.DELIVERY_ACK
 	}
 
 	return status
@@ -365,4 +358,22 @@ export const getCodeFromWSError = (error: Error) => {
 	}
 
 	return statusCode
+}
+
+/**
+ * Is the given platform WA business
+ * @param platform AuthenticationCreds.platform
+ */
+export const isWABusinessPlatform = (platform: string) => {
+	return platform === 'smbi' || platform === 'smba'
+}
+
+export function trimUndefineds(obj: any) {
+	for(const key in obj) {
+		if(typeof obj[key] === 'undefined') {
+			delete obj[key]
+		}
+	}
+
+	return obj
 }

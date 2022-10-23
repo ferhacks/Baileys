@@ -75,7 +75,7 @@ export const makeNoiseHandler = (
 	}
 
 	const data = Buffer.from(NOISE_MODE)
-	let hash = Buffer.from(data.byteLength === 32 ? data : sha256(Buffer.from(data)))
+	let hash = Buffer.from(data.byteLength === 32 ? data : sha256(data))
 	let salt = hash
 	let encKey = hash
 	let decKey = hash
@@ -97,7 +97,7 @@ export const makeNoiseHandler = (
 		finishInit,
 		processHandshake: ({ serverHello }: proto.HandshakeMessage, noiseKey: KeyPair) => {
 			authenticate(serverHello!.ephemeral!)
-			mixIntoKey(Curve.sharedKey(privateKey, serverHello.ephemeral!))
+			mixIntoKey(Curve.sharedKey(privateKey, serverHello!.ephemeral!))
 
 			const decStaticContent = decrypt(serverHello!.static!)
 			mixIntoKey(Curve.sharedKey(privateKey, decStaticContent))
@@ -105,7 +105,7 @@ export const makeNoiseHandler = (
 			const certDecoded = decrypt(serverHello!.payload!)
 			const { intermediate: certIntermediate } = proto.CertChain.decode(certDecoded)
 
-			const { issuerSerial } = proto.CertChainNoiseCertificateDetails.decode(certIntermediate!.details!)
+			const { issuerSerial } = proto.CertChain.NoiseCertificate.Details.decode(certIntermediate!.details!)
 
 			if(issuerSerial !== WA_CERT_DETAILS.SERIAL) {
 				throw new Boom('certification match failed', { statusCode: 400 })

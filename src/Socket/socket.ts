@@ -25,10 +25,14 @@ export const makeSocket = ({
 	auth: authState,
 	printQRInTerminal,
 	defaultQueryTimeoutMs,
-	transactionOpts
+	syncFullHistory,
+	transactionOpts,
+	qrTimeout,
+	options,
 }: SocketConfig) => {
 	const ws = new WebSocket(waWebSocketUrl, undefined, {
 		origin: DEFAULT_ORIGIN,
+		headers: options.headers,
 		handshakeTimeout: connectTimeoutMs,
 		timeout: connectTimeoutMs,
 		agent
@@ -48,6 +52,7 @@ export const makeSocket = ({
 	let epoch = 1
 	let keepAliveReq: NodeJS.Timeout
 	let qrTimer: NodeJS.Timeout
+	let closed = false
 
 	const uqTagId = generateMdTagPrefix()
 	const generateMessageTag = () => `${uqTagId}${epoch++}`
@@ -104,7 +109,7 @@ export const makeSocket = ({
 			})
 
 		if(sendMsg) {
-			sendRawMessage(sendMsg).catch(onClose)
+			sendRawMessage(sendMsg).catch(onClose!)
 		}
 
 		return result
@@ -134,9 +139,9 @@ export const makeSocket = ({
 			)
 			return result as any
 		} finally {
-			ws.off(`TAG:${msgId}`, onRecv)
-			ws.off('close', onErr) // if the socket closes, you'll never receive the message
-			ws.off('error', onErr)
+			ws.off(`TAG:${msgId}`, onRecv!)
+			ws.off('close', onErr!) // if the socket closes, you'll never receive the message
+			ws.off('error', onErr!)
 		}
 	}
 
@@ -166,7 +171,7 @@ export const makeSocket = ({
 		}
 		helloMsg = proto.HandshakeMessage.fromObject(helloMsg)
 
-		logger.info({ browser, helloMsg, registrationId: creds.registrationId }, 'connected to WA Web')
+		logger.info({ browser, helloMsg }, 'connected to WA Web')
 
 		const init = proto.HandshakeMessage.encode(helloMsg).finish()
 
@@ -177,12 +182,14 @@ export const makeSocket = ({
 
 		const keyEnc = noise.processHandshake(handshake, creds.noiseKey)
 
+		const config = { version, browser, syncFullHistory }
+
 		let node: proto.IClientPayload
 		if(!creds.me) {
-			node = generateRegistrationNode(creds, { version, browser })
+			node = generateRegistrationNode(creds, config)
 			logger.info({ node }, 'not logged in, attempting registration...')
 		} else {
-			node = generateLoginNode(creds.me!.id, { version, browser })
+			node = generateLoginNode(creds.me!.id, config)
 			logger.info({ node }, 'logging in...')
 		}
 
@@ -215,7 +222,7 @@ export const makeSocket = ({
 			]
 		})
 		const countChild = getBinaryNodeChild(result, 'count')
-		return +countChild.attrs.value
+		return +countChild!.attrs.value
 	}
 
 	/** generates and uploads a set of pre-keys to the server */
@@ -280,8 +287,14 @@ export const makeSocket = ({
 	}
 
 	const end = (error: Error | undefined) => {
+		if(closed) {
+			logger.trace({ trace: error?.stack }, 'connection already closed')
+			return
+		}
+
+		closed = true
 		logger.info(
-			{ error, trace: error?.stack },
+			{ trace: error?.stack },
 			error ? 'connection errored' : 'connection closed'
 		)
 
@@ -385,7 +398,7 @@ export const makeSocket = ({
 	)
 
 	/** logout & invalidate connection */
-	const logout = async() => {
+	const logout = async(msg?: string) => {
 		const jid = authState.creds.me?.id
 		if(jid) {
 			await sendNode({
@@ -408,11 +421,18 @@ export const makeSocket = ({
 			})
 		}
 
-		end(new Boom('Intentional Logout', { statusCode: DisconnectReason.loggedOut }))
+		end(new Boom(msg || 'Intentional Logout', { statusCode: DisconnectReason.loggedOut }))
 	}
 
 	ws.on('message', onMessageRecieved)
-	ws.on('open', validateConnection)
+	ws.on('open', async() => {
+		try {
+			await validateConnection()
+		} catch(err) {
+			logger.error({ err }, 'error in validating connection')
+			end(err)
+		}
+	})
 	ws.on('error', error => end(
 		new Boom(
 			`WebSocket Error (${error.message})`,
@@ -440,7 +460,7 @@ export const makeSocket = ({
 		const identityKeyB64 = Buffer.from(creds.signedIdentityKey.public).toString('base64')
 		const advB64 = creds.advSecretKey
 
-		let qrMs = 60_000 // time to let a QR live
+		let qrMs = qrTimeout || 60_000 // time to let a QR live
 		const genPairQR = () => {
 			if(ws.readyState !== ws.OPEN) {
 				return
@@ -458,7 +478,7 @@ export const makeSocket = ({
 			ev.emit('connection.update', { qr })
 
 			qrTimer = setTimeout(genPairQR, qrMs)
-			qrMs = 20_000 // shorter subsequent qrs
+			qrMs = qrTimeout || 20_000 // shorter subsequent qrs
 		}
 
 		genPairQR()
@@ -522,10 +542,10 @@ export const makeSocket = ({
 		const name = update.me?.name
 		// if name has just been received
 		if(creds.me?.name !== name) {
-			logger.info({ name }, 'updated pushName')
+			logger.debug({ name }, 'updated pushName')
 			sendNode({
 				tag: 'presence',
-				attrs: { name }
+				attrs: { name: name! }
 			})
 				.catch(err => {
 					logger.warn({ trace: err.stack }, 'error in sending presence update on name change')
